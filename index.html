@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dino Runner</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for retro game aesthetic */
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        .font-retro {
+            font-family: 'Press Start 2P', cursive;
+        }
+
+        .game-container {
+            border: 4px solid #333;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+        }
+        
+        /* Ensure canvas scales nicely on different screens */
+        #gameCanvas {
+            width: 100%;
+            height: auto;
+            display: block;
+            background-color: #f7f7f7;
+        }
+
+        /* Styles for the button with a cool retro effect */
+        .retro-button {
+            padding: 0.75rem 1.5rem;
+            border: 3px solid #333;
+            background-color: #ffcc00; /* Yellow */
+            color: #333;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 4px 4px 0px #333;
+            transition: all 0.1s ease;
+        }
+
+        .retro-button:hover {
+            background-color: #ffd733;
+            box-shadow: 6px 6px 0px #333;
+            transform: translate(-2px, -2px);
+        }
+
+        .retro-button:active {
+            box-shadow: 2px 2px 0px #333;
+            transform: translate(2px, 2px);
+        }
+
+    </style>
+</head>
+<body class="bg-gray-900 min-h-screen p-4 flex flex-col items-center justify-center font-retro text-gray-800">
+
+    <div class="w-full max-w-lg bg-white rounded-lg p-6 shadow-xl">
+        <h1 class="text-3xl text-center mb-6 text-gray-800">
+            DINO JUMP! 
+        </h1>
+
+        <!-- Score and Game Status -->
+        <div class="flex justify-between items-center text-sm mb-4">
+            <div id="scoreDisplay" class="px-3 py-1 bg-gray-100 rounded">SCORE: 0</div>
+            <div id="statusMessage" class="px-3 py-1 bg-yellow-200 rounded hidden">Press SPACE or TAP to start!</div>
+        </div>
+
+        <!-- Game Canvas -->
+        <div class="game-container rounded-md overflow-hidden">
+            <canvas id="gameCanvas" width="600" height="150"></canvas>
+        </div>
+
+        <!-- Controls/Info -->
+        <div class="mt-6 flex justify-center space-x-4">
+            <button id="startButton" class="retro-button">
+                START / RESTART
+            </button>
+        </div>
+        <p class="text-xs text-center text-gray-500 mt-4">
+            Controls: **SPACEBAR** or **TAP** to jump.
+        </p>
+
+    </div>
+    
+    <!-- Game Over Modal (Custom implementation instead of alert) -->
+    <div id="gameOverModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-8 rounded-lg shadow-2xl text-center border-4 border-red-600">
+            <h2 class="text-4xl text-red-600 mb-4">GAME OVER!</h2>
+            <p id="finalScoreText" class="text-xl mb-6 text-gray-700"></p>
+            <button id="modalRestartButton" class="retro-button bg-red-500 text-white hover:bg-red-600 border-red-700 shadow-red-700">
+                Play Again
+            </button>
+        </div>
+    </div>
+
+
+    <script>
+        // --- GAME CONSTANTS AND SETUP ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const startButton = document.getElementById('startButton');
+        const gameOverModal = document.getElementById('gameOverModal');
+        const modalRestartButton = document.getElementById('modalRestartButton');
+        const finalScoreText = document.getElementById('finalScoreText');
+
+        // Game State
+        let game;
+        let animationFrameId;
+
+        // Game Speed, increased over time
+        const initialGameSpeed = 4;
+        let gameSpeed = initialGameSpeed;
+        const speedIncreaseRate = 0.0005;
+
+        // Dimensions
+        const groundLevel = 20;
+
+        // Time tracking for score and obstacle spawning
+        let score = 0;
+        let lastTime = 0;
+
+        // Dino properties
+        const dino = {
+            x: 50,
+            y: canvas.height - 40 - groundLevel,
+            width: 30,
+            height: 40,
+            yVelocity: 0,
+            gravity: 1,
+            isJumping: false,
+            jumpStrength: 18,
+            originalY: canvas.height - 40 - groundLevel
+        };
+
+        // Obstacles array
+        let obstacles = [];
+        let obstacleSpawnTimer = 0;
+        const minSpawnInterval = 1000; // ms
+        const maxSpawnInterval = 2000; // ms
+
+        // --- GAME OBJECTS ---
+
+        /**
+         * Represents a single cactus obstacle.
+         */
+        class Obstacle {
+            constructor() {
+                this.width = 15 + Math.random() * 15; // Random width
+                this.height = 20 + Math.random() * 30; // Random height
+                this.x = canvas.width;
+                this.y = canvas.height - this.height - groundLevel;
+            }
+
+            update() {
+                this.x -= gameSpeed;
+            }
+
+            draw() {
+                ctx.fillStyle = '#4CAF50'; // Green
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(this.x, this.y, this.width, this.height);
+            }
+        }
+
+        // --- GAME FUNCTIONS ---
+
+        /**
+         * Clears the canvas and draws the ground line.
+         */
+        function drawBackground() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw Ground
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height - groundLevel);
+            ctx.lineTo(canvas.width, canvas.height - groundLevel);
+            ctx.stroke();
+        }
+
+        /**
+         * Draws the dinosaur character.
+         */
+        function drawDino() {
+            ctx.fillStyle = '#444'; // Dark Gray
+            ctx.fillRect(dino.x, dino.y, dino.width, dino.height);
+            
+            // Simple 'eye' detail
+            ctx.fillStyle = 'white';
+            ctx.fillRect(dino.x + dino.width - 6, dino.y + 6, 3, 3);
+        }
+
+        /**
+         * Updates the dinosaur's position, handling jumps and gravity.
+         */
+        function updateDino() {
+            if (dino.isJumping) {
+                dino.y += dino.yVelocity;
+                dino.yVelocity += dino.gravity;
+                
+                // Check if dino lands back on the ground
+                if (dino.y >= dino.originalY) {
+                    dino.y = dino.originalY;
+                    dino.isJumping = false;
+                    dino.yVelocity = 0;
+                }
+            }
+        }
+
+        /**
+         * Starts the dinosaur's jump action.
+         */
+        function jump() {
+            if (!game.isGameOver && !dino.isJumping) {
+                dino.isJumping = true;
+                dino.yVelocity = -dino.jumpStrength;
+            }
+        }
+
+        /**
+         * Spawns a new obstacle at random intervals.
+         */
+        function spawnObstacles(deltaTime) {
+            obstacleSpawnTimer += deltaTime;
+            
+            // Increase spawn rate over time (min interval decreases slightly)
+            const currentMinInterval = Math.max(800, minSpawnInterval - score * 0.5);
+
+            if (obstacleSpawnTimer >= currentMinInterval + Math.random() * (maxSpawnInterval - currentMinInterval)) {
+                obstacles.push(new Obstacle());
+                obstacleSpawnTimer = 0;
+            }
+        }
+
+        /**
+         * Updates and draws all obstacles, removing those off-screen.
+         */
+        function updateObstacles(deltaTime) {
+            spawnObstacles(deltaTime);
+
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                const obstacle = obstacles[i];
+                obstacle.update();
+                obstacle.draw();
+
+                // Remove off-screen obstacles
+                if (obstacle.x + obstacle.width < 0) {
+                    obstacles.splice(i, 1);
+                }
+            }
+        }
+
+        /**
+         * Checks for collision between the dino and any obstacle.
+         * @returns {boolean} True if a collision occurred.
+         */
+        function checkCollision() {
+            for (const obstacle of obstacles) {
+                // Dino bounding box
+                const d = dino;
+                
+                // Obstacle bounding box
+                const o = obstacle;
+
+                // Check for collision
+                if (d.x < o.x + o.width &&
+                    d.x + d.width > o.x &&
+                    d.y < o.y + o.height &&
+                    d.y + d.height > o.y) 
+                {
+                    return true; // Collision detected
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Updates the score and game speed.
+         */
+        function updateScore(deltaTime) {
+            score += deltaTime / 100; // Score increases by 1 for every 100ms
+            scoreDisplay.textContent = `SCORE: ${Math.floor(score).toString().padStart(5, '0')}`;
+            
+            // Gradually increase game speed
+            gameSpeed += speedIncreaseRate * deltaTime;
+        }
+
+        /**
+         * The main game loop function.
+         * @param {number} currentTime The timestamp provided by requestAnimationFrame.
+         */
+        function gameLoop(currentTime) {
+            const deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+
+            if (game.isPaused || game.isGameOver) {
+                // Stop the loop if the game is paused or over
+                return;
+            }
+
+            // 1. Update
+            updateScore(deltaTime);
+            updateDino();
+            updateObstacles(deltaTime);
+            
+            if (checkCollision()) {
+                gameOver();
+                return;
+            }
+
+            // 2. Draw
+            drawBackground();
+            drawDino();
+            for (const obstacle of obstacles) {
+                obstacle.draw();
+            }
+
+            // 3. Loop
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        /**
+         * Initializes or restarts the game state.
+         */
+        function startGame() {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+            
+            // Reset state
+            game = { isPaused: false, isGameOver: false };
+            score = 0;
+            gameSpeed = initialGameSpeed;
+            obstacles = [];
+            obstacleSpawnTimer = 0;
+            
+            // Reset Dino position
+            dino.y = dino.originalY;
+            dino.isJumping = false;
+            dino.yVelocity = 0;
+
+            // Hide modal and button updates
+            gameOverModal.classList.add('hidden');
+            startButton.textContent = "Restart";
+            
+            // Initial Draw
+            drawBackground();
+            drawDino();
+
+            // Start the loop
+            lastTime = performance.now();
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        /**
+         * Handles the Game Over event.
+         */
+        function gameOver() {
+            game.isGameOver = true;
+            cancelAnimationFrame(animationFrameId);
+
+            const finalScore = Math.floor(score);
+            finalScoreText.textContent = `Your Score: ${finalScore.toString().padStart(5, '0')}`;
+            
+            // Show the custom Game Over modal
+            gameOverModal.classList.remove('hidden');
+            startButton.textContent = "Game Over (Click to Restart)";
+        }
+
+        // --- EVENT HANDLERS ---
+        
+        // Handle jump on spacebar press
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                e.preventDefault(); // Prevent scrolling
+                if (game && !game.isGameOver) {
+                    jump();
+                } else if (!game || game.isGameOver) {
+                    startGame();
+                }
+            }
+        });
+
+        // Handle jump on tap/click
+        canvas.addEventListener('mousedown', () => {
+            if (game && !game.isGameOver) {
+                jump();
+            } else if (!game || game.isGameOver) {
+                startGame();
+            }
+        });
+        
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault(); // Prevent touch-scrolling
+            if (game && !game.isGameOver) {
+                jump();
+            } else if (!game || game.isGameOver) {
+                startGame();
+            }
+        });
+
+        startButton.addEventListener('click', startGame);
+        modalRestartButton.addEventListener('click', startGame);
+
+
+        // --- INITIAL CANVAS DRAW ---
+        window.onload = function() {
+            // Set up initial message
+            scoreDisplay.textContent = 'SCORE: 00000';
+            
+            // Draw initial static screen
+            drawBackground();
+            drawDino();
+            
+            // Initialize game state object
+            game = { isPaused: true, isGameOver: false };
+        };
+
+    </script>
+</body>
+</html>
